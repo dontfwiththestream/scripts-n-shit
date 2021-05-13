@@ -1,0 +1,192 @@
+#!/bin/bash
+
+cat >/etc/ssh/sshd_config <<EOL
+#Port 22
+#HostKey /etc/ssh/ssh_host_rsa_key
+#HostKey /etc/ssh/ssh_host_ecdsa_key
+#HostKey /etc/ssh/ssh_host_ed25519_key
+# Logging
+#SyslogFacility AUTH
+#LogLevel INFO
+
+# Authentication:
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+AuthorizedKeysFile .ssh/authorized_keys
+#AllowAgentForwarding yes
+#AllowTcpForwarding yes
+#GatewayPorts no
+X11Forwarding yes
+#X11DisplayOffset 10
+#X11UseLocalhost yes
+#PermitTTY yes
+PrintMotd no
+#PrintLastLog yes
+TCPKeepAlive yes
+#PermitUserEnvironment no
+#Compression delayed
+#ClientAliveInterval 0
+#ClientAliveCountMax 3
+#UseDNS no
+#PidFile /var/run/sshd.pid
+#MaxStartups 10:30:100
+#PermitTunnel no
+#ChrootDirectory none
+#VersionAddendum none
+
+# no default banner path
+#Banner none
+
+# Allow client to pass locale environment variables
+AcceptEnv LANG LC_*
+
+# override default of no subsystems
+Subsystem       sftp    /usr/lib/openssh/sftp-server
+
+# Example of overriding settings on a per-user basis
+#Match User anoncvs
+#       X11Forwarding no
+#       AllowTcpForwarding no
+#       PermitTTY no
+#       ForceCommand cvs server
+EOL
+apt install fail2ban ufw
+systemctl start fail2ban
+systemctl enable fail2ban
+systemctl restart ssh
+sudo ufw allow ssh
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw enable
+echo -e "server secured, dont fuck it up retard"
+
+cd /tmp
+
+
+apt install nginx php nginx mariadb-server mariadb-client php-fpm php-mysql unzip
+apt remove apache2
+#creating user
+echo -e "${YELLOW}Adding separate user & creating website home folder for secure running of your website...${NC}"
+
+  echo -e "${YELLOW}Please, enter new username: ${NC}"
+  read username
+  echo -e "${YELLOW}Please enter website name: ${NC}"
+  read websitename
+  groupadd $username
+  adduser --home /var/www/$username/$websitename --ingroup $username $username
+  mkdir /var/www/$username/$websitename/www
+  chown -R $username:$username /var/www/$username/$websitename
+  echo -e "${GREEN}User, group and home folder were succesfully created!
+  Username: $username
+  Group: $username
+  Home folder: /var/www/$username/$websitename
+  Website folder: /var/www/$username/$websitename/www${NC}"
+
+read -r -p "Do you want to configure Nginx automatically? [y/N] " response
+case $response in
+	[yY][eE][sS]|[yY]) 
+
+  echo -e "Please, provide us with your domain name: "
+  read domain_name
+  echo -e "Please, provide us with your email: "
+  read domain_email
+  cat >/etc/nginx/sites-available/$domain_name.conf <<EOL
+server {
+		root /var/www/$username/$websitename/www; index index.php index.html index.htm; server_name $domain_name; error_log /var/log/nginx/mysite.com_error.log; access_log /var/log/nginx/mysite.com_access.log; client_max_body_size 100M; location / { try_files \$uri \$uri/ /index.php?\$args; } location ~ \.php$ { include snippets/fastcgi-php.conf; fastcgi_pass unix:/run/php/php7.4-fpm.sock; fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name ; } 
+}
+
+
+EOL
+
+	  ln -s /etc/nginx/sites-available/$domain_name.conf /etc/nginx/sites-enabled/
+	service nginx restart
+		  service php7.4-fpm restart
+	P_IP="`wget http://ipinfo.io/ip -qO -`"
+
+	echo -e "${GREEN}Nginx config was updated!
+
+	New config file was created: /etc/nginx/sites-available/$domain_name.conf
+	Domain was set to: $domain_name
+	Root folder was set to: /var/www/$username/$websitename/www
+	Option Indexes was set to: -Indexes (to close directory listing)
+	Your server public IP is: $P_IP (Please, set this IP into your domain name 'A' record)
+	Website was activated & nginx service restarted!
+	${NC}"
+
+		;;
+	*)
+
+  echo -e "${RED}WARNING! Nginx was not configured properly, you can do this manually or re run our script.${NC}"
+
+		;;
+esac
+
+	wget https://wordpress.org/latest.zip -O /tmp/wp.zip
+
+  echo -e "Unpacking WordPress into website home directory..."
+  sleep 5
+  unzip /tmp/wp.zip -d /var/www/$username/$websitename/www/
+  mv /var/www/$username/$websitename/www/wordpress/* /var/www/$username/$websitename/www
+  rm -rf /var/www/$username/$websitename/www/wordpress
+  rm /tmp/$wordpress_lang.zip
+  mkdir /var/www/$username/$websitename/www/wp-content/uploads
+  chmod -R 777 /var/www/$username/$websitename/www/wp-content/uploads
+echo -e "${GREEN}Adding user & database for WordPress, setting wp-config.php...${NC}"
+mysql_secure_installation
+echo -e "Please, set username for database: "
+read db_user
+echo -e "Please, set password for database user, then enter the password for the database root user you set up in the previous menu "
+read db_pass
+
+mysql -u root -p <<EOF
+CREATE USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';
+CREATE DATABASE IF NOT EXISTS $db_user;
+GRANT ALL PRIVILEGES ON $db_user.* TO '$db_user'@'localhost';
+ALTER DATABASE $db_user CHARACTER SET utf8 COLLATE utf8_general_ci;
+EOF
+
+cat >/var/www/$username/$websitename/www/wp-config.php <<EOL
+<?php
+
+define('DB_NAME', '$db_user');
+
+define('DB_USER', '$db_user');
+
+define('DB_PASSWORD', '$db_pass');
+
+define('DB_HOST', 'localhost');
+
+define('DB_CHARSET', 'utf8');
+
+define('DB_COLLATE', '');
+
+define('AUTH_KEY',         '$db_user');
+define('SECURE_AUTH_KEY',  '$db_user');
+define('LOGGED_IN_KEY',    '$db_user');
+define('NONCE_KEY',        '$db_user');
+define('AUTH_SALT',        '$db_user');
+define('SECURE_AUTH_SALT', '$db_user');
+define('LOGGED_IN_SALT',   '$db_user');
+define('NONCE_SALT',       '$db_user');
+
+\$table_prefix  = 'wp_';
+
+define('WP_DEBUG', false);
+
+if ( !defined('ABSPATH') )
+	define('ABSPATH', dirname(FILE) . '/');
+
+require_once(ABSPATH . 'wp-settings.php');
+EOL
+
+chown -R $username:$username /var/www/$username
+echo -e "${GREEN}Database user, database and wp-config.php were succesfully created & configured!${NC}"
+apt install snapd
+snap install certbot --classic
+/snap/bin/certbot --nginx
+sleep 3
+echo -e "fuckin done. Don't break shit."
+
